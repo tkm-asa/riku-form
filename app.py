@@ -35,23 +35,23 @@ st.sidebar.markdown("---")
 model_option = st.sidebar.selectbox(
     "使用するYOLOモデル",
     [
-        "yolov8l-pose.pt (高精度・低速)",
-        "yolov8m-pose.pt (中程度)",
-        "yolov8s-pose.pt (軽量)",
         "yolov8n-pose.pt (最軽量)",
+        "yolov8s-pose.pt (軽量)",
+        "yolov8m-pose.pt (中程度)",
+        "yolov8l-pose.pt (高精度・低速)",
     ],
-    index=2,
+    index=0,
     help="軽量モデルほど高速ですが、キーポイント検出精度が低下する場合があります"
 )
 
-if "yolov8l" in model_option:
-    model_path = "yolov8l-pose.pt"
-elif "yolov8m" in model_option:
-    model_path = "yolov8m-pose.pt"
+if "yolov8n" in model_option:
+    model_path = "yolov8n-pose.pt"
 elif "yolov8s" in model_option:
     model_path = "yolov8s-pose.pt"
+elif "yolov8m" in model_option:
+    model_path = "yolov8m-pose.pt"
 else:
-    model_path = "yolov8n-pose.pt"
+    model_path = "yolov8l-pose.pt"
 
 # 信頼度閾値
 conf_thresh = st.sidebar.slider(
