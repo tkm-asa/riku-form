@@ -28,17 +28,30 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ============ サイドバー ============
-st.sidebar.title("⚙️ 設定")
+st.sidebar.title(" 設定")
 st.sidebar.markdown("---")
 
 # YOLOモデル選択
 model_option = st.sidebar.selectbox(
     "使用するYOLOモデル",
-    ["yolov8l-pose.pt (推奨・精度高)", "yolov8m-pose.pt (軽量)"],
-    help="精度と速度のバランスを選択できます"
+    [
+        "yolov8l-pose.pt (高精度・低速)",
+        "yolov8m-pose.pt (中程度)",
+        "yolov8s-pose.pt (軽量)",
+        "yolov8n-pose.pt (最軽量)",
+    ],
+    index=2,
+    help="軽量モデルほど高速ですが、キーポイント検出精度が低下する場合があります"
 )
 
-model_path = "yolov8l-pose.pt" if "yolov8l" in model_option else "yolov8m-pose.pt"
+if "yolov8l" in model_option:
+    model_path = "yolov8l-pose.pt"
+elif "yolov8m" in model_option:
+    model_path = "yolov8m-pose.pt"
+elif "yolov8s" in model_option:
+    model_path = "yolov8s-pose.pt"
+else:
+    model_path = "yolov8n-pose.pt"
 
 # 信頼度閾値
 conf_thresh = st.sidebar.slider(
@@ -51,7 +64,7 @@ conf_thresh = st.sidebar.slider(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 📊 使い方")
+st.sidebar.markdown("###  使い方")
 st.sidebar.markdown("""
 1. **動画をアップロード**
    - .mov, .mp4, .avi形式に対応
@@ -68,7 +81,7 @@ st.sidebar.markdown("""
 """)
 
 # ============ メインコンテンツ ============
-st.title("🏃 ランニングフォーム分析システム")
+st.title(" ランニングフォーム分析システム")
 st.markdown("**一流選手の標準値と比較して、あなたのフォームを詳細に分析します**")
 
 st.markdown("---")
@@ -92,7 +105,7 @@ st.markdown("---")
 
 # 分析実行
 if uploaded_file is not None:
-    st.success(f"✅ ファイル読み込み完了: {uploaded_file.name}")
+    st.success(f"ファイル読み込み完了: {uploaded_file.name}")
     
     # 動画情報表示
     col1, col2, col3 = st.columns(3)
@@ -121,13 +134,13 @@ if uploaded_file is not None:
     st.markdown("---")
     
     # 分析ボタン
-    if st.button("🚀 フォーム分析を実行", use_container_width=True, type="primary"):
+    if st.button(" フォーム分析を実行", use_container_width=True, type="primary"):
         try:
             # 分析実行
-            with st.spinner("🔄 YOLO ポーズ推定を実行中..."):
+            with st.spinner(" YOLO ポーズ推定を実行中..."):
                 analyzer = RunningFormAnalyzer(model_path=model_path, conf_thresh=conf_thresh)
             
-            with st.spinner("🔄 接地検出とフォーム評価を実行中..."):
+            with st.spinner(" 接地検出とフォーム評価を実行中..."):
                 # 出力動画のパス
                 output_video_path = temp_path.replace('.mov', '_analyzed.mp4')
                 
@@ -154,6 +167,15 @@ if uploaded_file is not None:
                 st.metric("接地回数", f"{session_info['total_landings']} 回")
             with col4:
                 st.metric("進行方向", session_info['direction'])
+
+            st.markdown("###  処理性能")
+            perf1, perf2, perf3 = st.columns(3)
+            with perf1:
+                st.metric("YOLO処理時間", f"{session_info['yolo_time_sec']:.1f} 秒")
+            with perf2:
+                st.metric("解析速度", f"{session_info['processing_fps']:.2f} FPS")
+            with perf3:
+                st.metric("1フレーム処理時間", f"{session_info['time_per_frame']:.3f} 秒")
             
             st.markdown("---")
             
@@ -163,19 +185,19 @@ if uploaded_file is not None:
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.markdown(f"""
-                ### 📈 総合スコア
+                ###  総合スコア
                 
                 **{overall_score:.0f} / 100**
                 """)
                 
                 if overall_score >= 85:
-                    st.success("🌟 優秀")
+                    st.success(" 優秀")
                 elif overall_score >= 70:
-                    st.info("✅ 良好")
+                    st.info(" 良好")
                 elif overall_score >= 55:
-                    st.warning("⚠️ 要改善")
+                    st.warning("要改善")
                 else:
-                    st.error("🔴 要大幅改善")
+                    st.error("要大幅改善")
             
             with col2:
                 # スコアゲージ
@@ -185,7 +207,7 @@ if uploaded_file is not None:
             st.markdown("---")
             
             # タブ表示
-            tab1, tab2, tab3, tab4 = st.tabs(["📹 分析動画", "🔍 詳細評価", "💡 改善ポイント", "📋 全接地データ"])
+            tab1, tab2, tab3, tab4 = st.tabs([" 分析動画", " 詳細評価", " 改善ポイント", " 全接地データ"])
             
             with tab1:
                 st.markdown("### 骨格描画付き分析動画")
@@ -200,14 +222,14 @@ if uploaded_file is not None:
                     with col1:
                         with open(output_video_path, 'rb') as f:
                             st.download_button(
-                                label="📥 動画をダウンロード",
+                                label=" 動画をダウンロード",
                                 data=f.read(),
                                 file_name="running_analysis.mp4",
                                 mime="video/mp4",
                                 use_container_width=True
                             )
                 else:
-                    st.warning("⚠️ 分析動画の生成に失敗しました")
+                    st.warning(" 分析動画の生成に失敗しました")
             
             with tab2:
                 st.markdown("### 各接地フレームの詳細評価")
@@ -242,16 +264,16 @@ if uploaded_file is not None:
                     # レベルに応じた表示
                     if level == "優秀":
                         color = "green"
-                        icon = "✅"
+                        icon = ""
                     elif level == "良好":
                         color = "blue"
-                        icon = "👍"
+                        icon = ""
                     elif level == "要注意":
                         color = "orange"
-                        icon = "⚠️"
+                        icon = ""
                     else:  # 改善必須
                         color = "red"
-                        icon = "🔴"
+                        icon = ""
                     
                     with st.container():
                         col1, col2 = st.columns([3, 1])
@@ -262,15 +284,25 @@ if uploaded_file is not None:
                             st.markdown(f"**優先度:** {priority}")
                         
                         # 比較情報
-                        comp = comparison
-                        st.markdown(f"""
-                        **あなた:** {comp['your_value']} | **標準値:** {comp['ideal_value']} | **範囲:** {comp['range']}  
-                        **差分:** {comp['difference']:+.1f} ({['✅ 範囲内', '❌ 範囲外'][not comp['within_range']]})
-                        """)
+                        if comparison is not None:
+                            comp = comparison
+
+                            range_status = (
+                                "範囲内"
+                                if comp["within_range"]
+                                else"範囲外"
+                            )
+
+                            st.markdown(f"""
+                                        **あなた:**{comp['your_value']}
+                                        **標準値:**{comp['ideal_value']}
+                                        **範囲:**{comp['range']}
+                                        **差分:**{comp['difference']:+.1f} ({range_status})
+                                        """)
                         
                         # アドバイス
-                        st.info(f"💡 {advice}")
-                        st.markdown("---")
+                        st.info(f"{advice}")
+                        
             
             with tab3:
                 st.markdown("### 優先的に改善すべきポイント")
@@ -278,23 +310,23 @@ if uploaded_file is not None:
                 insights = report.get('key_insights', {})
                 
                 if insights.get('critical_issue_count', 0) > 0:
-                    st.error(f"🔴 改善必須の課題: {insights['critical_issue_count']}項目")
+                    st.error(f" 改善必須の課題: {insights['critical_issue_count']}項目")
                 
                 if insights.get('caution_issue_count', 0) > 0:
-                    st.warning(f"⚠️ 要注意の課題: {insights['caution_issue_count']}項目")
+                    st.warning(f" 要注意の課題: {insights['caution_issue_count']}項目")
                 
                 if insights.get('priority_actions'):
                     st.markdown("#### 改善アクション（優先順）")
                     for i, action in enumerate(insights['priority_actions'], 1):
                         st.markdown(f"{i}. {action}")
                 else:
-                    st.success("✅ 大きな改善点はありません！")
+                    st.success(" 大きな改善点はありません！")
             
             with tab4:
                 st.markdown("### 全接地データ（JSON形式）")
                 
                 # JSON表示
-                with st.expander("📋 詳細JSONデータを表示", expanded=False):
+                with st.expander(" 詳細JSONデータを表示", expanded=False):
                     st.json(report)
             
             st.markdown("---")
@@ -303,7 +335,7 @@ if uploaded_file is not None:
             os.remove(temp_path)
             
         except Exception as e:
-            st.error(f"❌ エラーが発生しました: {str(e)}")
+            st.error(f"エラーが発生しました: {str(e)}")
             st.error("詳細なエラー情報:")
             st.code(str(e), language="text")
             
@@ -312,11 +344,11 @@ if uploaded_file is not None:
                 os.remove(temp_path)
 
 else:
-    st.info("📹 左側から動画ファイルをアップロードしてください")
+    st.info(" 左側から動画ファイルをアップロードしてください")
     
     st.markdown("---")
     st.markdown("""
-    ## 📌 このシステムについて
+    ##  このシステムについて
     
     ### 特徴
     - **AI駆動**: YOLOv8を使用した高精度のポーズ推定
@@ -338,5 +370,5 @@ else:
     """)
 
 st.markdown("---")
-st.markdown("### 📞 サポート")
+st.markdown("### サポート")
 st.markdown("問題が発生した場合は、GitHubのIssuesページでお知らせください。")

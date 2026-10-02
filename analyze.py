@@ -6,6 +6,7 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 import json
+import time
 
 class RunnerType(Enum):
     PITCH = "ピッチ型"
@@ -425,14 +426,38 @@ class RunningFormAnalyzer:
         )
 
     def generate_feedback(self, metrics: Dict) -> List[FeedbackItem]:
-        """メトリクスからフィードバックを生成（標準値比較付き）"""
+        """測定値を内部で使い、接地位置と姿勢の傾向を文章に変換する。"""
         feedback_list = []
-        
-        feedback_list.append(self._evaluate_hip_load(metrics))
-        feedback_list.append(self._evaluate_knee_quality(metrics))
-        feedback_list.append(self._evaluate_push_off(metrics))
-        feedback_list.append(self._evaluate_stability(metrics))
-        feedback_list.append(self._evaluate_trunk(metrics))
+        offset = metrics['forward_offset_norm']
+        if offset > 0.30:
+            feedback_list.append(FeedbackItem(0, '接地位置', EvaluationLevel.CAUTION, 0,
+                '身体より前で接地する傾向があります', None,
+                '足を前へ伸ばす意識を控え、身体の近くで接地する感覚を試しましょう。'))
+        else:
+            feedback_list.append(FeedbackItem(0, '接地位置', EvaluationLevel.GOOD, 0,
+                '接地位置は身体に比較的近い傾向です', None,
+                '現在の動きを動画で確認しましょう。'))
+        angle = metrics['knee_angle']
+        if angle is not None and angle < 145:
+            feedback_list.append(FeedbackItem(0, '接地時の膝', EvaluationLevel.CAUTION, 0,
+                '接地時に膝が大きく曲がる傾向があります', None,
+                '動画で接地前後の脚の動きを確認しましょう。'))
+        elif angle is not None and angle > 175:
+            feedback_list.append(FeedbackItem(0, '接地時の膝', EvaluationLevel.CAUTION, 0,
+                '接地時に膝が伸びる傾向があります', None,
+                '足を前に伸ばして接地していないか動画で確認しましょう。'))
+        elif angle is not None:
+            feedback_list.append(FeedbackItem(0, '接地時の膝', EvaluationLevel.GOOD, 0,
+                '接地時の膝の曲がり方に大きな偏りは見られません', None,
+                '動画で接地前後の動きも確認しましょう。'))
+        lean = metrics['trunk_lean']
+        if lean < 0:
+            message, advice, level = '接地時に上体が後ろへ傾く傾向があります', '上体を腰から折らず、姿勢全体を動画で確認しましょう。', EvaluationLevel.CAUTION
+        elif lean > 15:
+            message, advice, level = '接地時に上体の前傾が大きい傾向があります', '腰から折れていないか、横から撮影した動画で確認しましょう。', EvaluationLevel.CAUTION
+        else:
+            message, advice, level = '接地時の上体の傾きに大きな偏りは見られません', '動画で動きの一貫性も確認しましょう。', EvaluationLevel.GOOD
+        feedback_list.append(FeedbackItem(0, '上体の姿勢', level, 0, message, None, advice))
         
         priority_map = {
             EvaluationLevel.CRITICAL: 1,
@@ -440,12 +465,41 @@ class RunningFormAnalyzer:
             EvaluationLevel.GOOD: 3,
             EvaluationLevel.EXCELLENT: 4
         }
-        feedback_list.sort(key=lambda x: (priority_map[x.level], -x.score))
+        feedback_list.sort(key=lambda x: priority_map[x.level])
         
         for i, item in enumerate(feedback_list, 1):
             item.priority = i
         
         return feedback_list
+
+    @staticmethod
+    def summarize_feedback(evaluations: List[LandingEvaluation]) -> Dict:
+        """接地ごとの判定をまとめ、頻度の高い傾向を優先して返す。"""
+        if not evaluations:
+            return {'status': '分析できませんでした', 'strengths': [], 'improvements': [],
+                    'note': '接地を十分に検出できませんでした。全身が映る横からの動画で再試行してください。'}
+        categories = {}
+        for evaluation in evaluations:
+            for item in evaluation.feedback:
+                entry = categories.setdefault(item.category, {'issues': [], 'goods': [], 'total': 0})
+                entry['total'] += 1
+                entry['issues' if item.level in (EvaluationLevel.CAUTION, EvaluationLevel.CRITICAL) else 'goods'].append(item)
+        improvements, strengths = [], []
+        for category, entry in categories.items():
+            issue_count = len(entry['issues'])
+            if issue_count > entry['total'] / 2:
+                representative = max(entry['issues'], key=lambda item: sum(
+                    other.message == item.message for other in entry['issues']))
+                improvements.append({'category': category, 'message': representative.message,
+                                     'advice': representative.advice, 'frequency': issue_count / entry['total']})
+            elif entry['goods']:
+                strengths.append({'category': category, 'message': entry['goods'][0].message})
+        improvements.sort(key=lambda item: item['frequency'], reverse=True)
+        for item in improvements:
+            del item['frequency']
+        return {'status': '改善候補があります' if improvements else '大きな偏りは検出されませんでした',
+                'strengths': strengths, 'improvements': improvements[:2],
+                'note': '横方向の単眼映像から得た参考情報です。撮影角度や走行局面で判定が変わります。'}
 
     def _evaluate_hip_load(self, metrics: Dict) -> FeedbackItem:
         """腰の乗りを評価"""
@@ -661,17 +715,32 @@ class RunningFormAnalyzer:
         raw_keypoints = []
 
         print("1/4: YOLO ポーズ推定を実行中...")
+        yolo_start_time = time.perf_counter()
+        processed_frames = 0
+
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
+
             results = self.model(frame, verbose=False)
             kp, _ = self.get_main_person_keypoints(results[0])
-            
+
             frames.append(frame)
             raw_keypoints.append(kp if kp is not None else np.zeros((17, 2)))
+            processed_frames += 1
 
         cap.release()
+
+        yolo_time = time.perf_counter() - yolo_start_time
+        processing_fps = processed_frames / yolo_time if yolo_time > 0 else 0.0
+        time_per_frame = yolo_time / processed_frames if processed_frames > 0 else 0.0
+
+        print(f"  - YOLO処理時間: {yolo_time:.1f} 秒")
+        print(f"  - 処理フレーム数: {processed_frames}")
+        print(f"  - 解析速度: {processing_fps:.2f} FPS")
+        print(f"  - 1フレーム処理時間: {time_per_frame:.3f} 秒")
+
         keypoints_seq = np.array(raw_keypoints)
 
         print("2/4: 進行方向推定および接地フレーム検出中...")
@@ -696,13 +765,13 @@ class RunningFormAnalyzer:
                 caution_count = sum(1 for f in feedback if f.level == EvaluationLevel.CAUTION)
                 
                 if critical_count > 0:
-                    overall_rec = "⚠️ フォームの大幅な改善が必要です"
+                    overall_rec = "フォームの大幅な改善が必要です"
                 elif caution_count > 2:
-                    overall_rec = "📊 複数の項目で改善が必要です"
+                    overall_rec = "複数の項目で改善が必要です"
                 elif caution_count > 0:
-                    overall_rec = "💡 いくつかの項目を改善することで、さらに効率的な走りになります"
+                    overall_rec = "いくつかの項目を改善することで、さらに効率的な走りになります"
                 else:
-                    overall_rec = "✅ フォームは良好です。現在のレベルを維持しましょう"
+                    overall_rec = "フォームは良好です。現在のレベルを維持しましょう"
                 
                 overall_score = metrics['overall_form_score']
                 
@@ -759,7 +828,7 @@ class RunningFormAnalyzer:
                             'range': f"{f.comparison.range_min}-{f.comparison.range_max}",
                             'difference': f.comparison.difference,
                             'within_range': f.comparison.is_within_range,
-                        },
+                        } if f.comparison is not None else None,
                         'advice': f.advice,
                     }
                     for f in e.feedback
@@ -770,16 +839,22 @@ class RunningFormAnalyzer:
         summary = {
             'session_info': {
                 'direction': dir_str,
-                'total_landings': len(landings),
-                'duration_sec': round(duration_sec, 2),
-                'cadence_spm': round(spm, 1),
+                'cadence_spm': float(spm),
                 'runner_type': runner_type.value,
+                'total_landings': len(landings),
+                'yolo_time_sec': float(yolo_time),
+                'processing_fps': float(processing_fps),
+                'time_per_frame': float(time_per_frame),
+                'processed_frames': int(processed_frames),
             },
             'overall_assessment': {
-                'avg_score': round(avg_overall, 1),
-                'summary': '一流選手との比較において、あなたのフォーム改善ポイントが以下に示されています。'
+                'avg_score': float(avg_overall),
+                'summary': '接地時のフォームの傾向を示します。'
             },
-            'landing_evaluations': [serialize_evaluation(e) for e in evaluations],
+            'landing_evaluations': [
+                serialize_evaluation(e) for e in evaluations
+            ],
+            'form_feedback': self.summarize_feedback(evaluations),
         }
 
         # キーインサイト生成
@@ -813,7 +888,10 @@ class RunningFormAnalyzer:
                         if len(insights['priority_actions']) >= 3:
                             break
             
-            summary['key_insights'] = insights
+            summary['key_insights'] = {
+                'priority_actions': [item['message'] + '。' + item['advice']
+                                     for item in summary['form_feedback']['improvements']]
+            }
 
         # アノテーション動画出力
         if output_video_path:
@@ -822,11 +900,8 @@ class RunningFormAnalyzer:
         return summary
 
     def _write_annotated_video(self, frames, keypoints_seq, landing_frame_dict, fps, width, height, output_path, spm, runner_type):
-        """骨格描画とフィードバック情報をアノテーションした動画を出力"""
+        """骨格のみを描画した動画を出力する。"""
         out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
-        
-        current_eval = None
-        eval_display_timer = 0
         
         for i, frame in enumerate(frames):
             # 全フレームに骨格を描画（接地時はハイライト）
@@ -837,39 +912,6 @@ class RunningFormAnalyzer:
                 highlight=is_landing
             )
             
-            if i in landing_frame_dict:
-                current_eval = landing_frame_dict[i]
-                eval_display_timer = int(fps * 0.5)
-            
-            # 接地時のフィードバック表示
-            if current_eval and eval_display_timer > 0:
-                eval_display_timer -= 1
-                
-                y_pos = 60
-                # 背景の半透明矩形
-                cv2.rectangle(frame_with_skeleton, (40, 50), (600, 300), (0, 0, 0), -1)
-                cv2.rectangle(frame_with_skeleton, (40, 50), (600, 300), (255, 255, 255), 2)
-                
-                cv2.putText(frame_with_skeleton, f"LANDING ({current_eval.side.upper()}) - Score: {current_eval.overall_score:.0f}/100",
-                            (50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 3)
-                
-                y_pos += 50
-                # 最優先の3つのフィードバックを表示
-                for fb in sorted(current_eval.feedback, key=lambda x: x.priority)[:3]:
-                    color = (0, 255, 0) if fb.level == EvaluationLevel.EXCELLENT else \
-                            (0, 255, 255) if fb.level == EvaluationLevel.GOOD else \
-                            (0, 165, 255) if fb.level == EvaluationLevel.CAUTION else (0, 0, 255)
-                    
-                    comp = fb.comparison
-                    diff_str = f"+{comp.difference:.1f}" if comp.difference > 0 else f"{comp.difference:.1f}"
-                    cv2.putText(frame_with_skeleton, f"{fb.category}: {fb.message} (標準{diff_str})",
-                                (50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
-                    y_pos += 35
-
-            # 全体サマリーの常時表示
-            cv2.putText(frame_with_skeleton, f"SPM: {spm:.1f} | Type: {runner_type.value}", (50, height - 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 200, 0), 2)
-
             out.write(frame_with_skeleton)
         out.release()
         print(f"✅ 骨格描画付き解析動画を出力しました: {output_path}")
@@ -887,7 +929,7 @@ if __name__ == "__main__":
         print("\n" + "="*80)
         print("ランニングフォーム解析レポート（骨格描画版）")
         print("="*80)
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        print(json.dumps(report['form_feedback'], ensure_ascii=False, indent=2))
         
     else:
-        print(f"❌ ファイル '{input_video}' が見つかりません。パスを確認してください。")
+        print(f"ファイル '{input_video}' が見つかりません。パスを確認してください。")

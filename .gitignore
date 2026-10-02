@@ -4,3 +4,6 @@
 .vscode/
 
 *.pt
+.venv/
+__pycache__/
+*.pyc
